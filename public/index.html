@@ -1,0 +1,1087 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>prompt-router editor</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
+    <style>
+      :root {
+        --bg: #05070d; --panel: #0a0e16; --border: #17324d; --fg: #5b93c7;
+        --accent: #1f5a8a; --muted: #46688a; --hover: #0f1a26; --tabbar: #0a0e16;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%;
+        font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; }
+      body { text-shadow: 0 0 1px rgba(91, 147, 199, 0.25); }
+      body { display: grid; grid-template-columns: 270px 1fr 320px; height: 100vh;
+        background: var(--bg); color: var(--fg); overflow: hidden; }
+      .col { height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+      #sidebar { background: var(--panel); border-right: 1px solid var(--border); }
+      #panel { background: var(--panel); border-left: 1px solid var(--border); }
+      .head { padding: 10px 12px; font-size: 11px; text-transform: uppercase;
+        letter-spacing: .5px; color: var(--muted); border-bottom: 1px solid var(--border);
+        display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+      .iconbtn { cursor: pointer; color: var(--muted); font-size: 15px; line-height: 1;
+        padding: 0 4px; user-select: none; }
+      .iconbtn:hover { color: var(--fg); }
+      /* Activity switch */
+      #activity { display: flex; border-bottom: 1px solid var(--border); }
+      .act { flex: 1; text-align: center; padding: 8px; font-size: 11px; cursor: pointer;
+        text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+        border-bottom: 2px solid transparent; user-select: none; }
+      .act.active { color: var(--fg); border-bottom-color: var(--accent); }
+      .view { flex: 1; overflow: auto; display: none; flex-direction: column; }
+      .view.active { display: flex; }
+      #tree { padding: 4px 0; font-size: 13px; }
+      .node { padding: 2px 8px; cursor: pointer; white-space: nowrap; user-select: none;
+        overflow: hidden; text-overflow: ellipsis; }
+      .node:hover { background: var(--hover); }
+      .node.active { background: #1a3550; color: #a6cdf0; }
+      .node .caret { display: inline-block; width: 12px; color: var(--muted); }
+      /* Input modal */
+      #modal { position: fixed; inset: 0; z-index: 2000; display: none;
+        align-items: center; justify-content: center; background: rgba(0,0,0,.55); }
+      #modal .mbox { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+        padding: 16px; width: 440px; max-width: 90vw; box-shadow: 0 10px 30px rgba(0,0,0,.6); }
+      #modaltitle { color: var(--fg); font-size: 13px; margin-bottom: 10px; }
+      #modalinput { width: 100%; background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+        border-radius: 4px; padding: 8px; font: inherit; font-size: 13px; }
+      #modal .mbtns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+      #ppmodal { position: fixed; inset: 0; z-index: 2000; display: none;
+        align-items: center; justify-content: center; background: rgba(0,0,0,.55); }
+      #ppmodal .mbox { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+        padding: 16px; max-width: 92vw; box-shadow: 0 10px 30px rgba(0,0,0,.6); }
+      #modaltitle2 { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+      #pptext { width: 100%; height: 240px; background: var(--bg); color: var(--fg);
+        border: 1px solid var(--border); border-radius: 4px; padding: 10px; font: inherit;
+        font-size: 13px; resize: vertical; line-height: 1.5; }
+      #ppmodal .mbtns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+      /* Context menu */
+      #ctxmenu { position: fixed; z-index: 1000; display: none; min-width: 150px;
+        background: var(--panel); border: 1px solid var(--border); border-radius: 5px;
+        padding: 4px; box-shadow: 0 4px 14px rgba(0,0,0,.5); font-size: 13px; }
+      #ctxmenu .mi { padding: 6px 10px; border-radius: 3px; cursor: pointer; white-space: nowrap; }
+      #ctxmenu .mi:hover { background: var(--hover); color: #a6cdf0; }
+      #ctxmenu .mi.danger:hover { background: #40201a; color: #f48771; }
+      #ctxmenu .sep { height: 1px; background: var(--border); margin: 4px 2px; }
+      /* SCM */
+      #scmbody { padding: 8px; font-size: 13px; }
+      #commitmsg { width: 100%; background: var(--bg); color: var(--fg);
+        border: 1px solid var(--border); border-radius: 4px; padding: 6px; font: inherit;
+        font-size: 13px; resize: vertical; min-height: 46px; }
+      .scmrow { display: flex; align-items: center; gap: 6px; padding: 3px 4px;
+        border-radius: 3px; cursor: pointer; }
+      .scmrow:hover { background: var(--hover); }
+      .scmrow .fname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .scmrow .st { color: var(--muted); font-family: monospace; width: 14px; text-align: center; }
+      .scmrow .act2 { color: var(--muted); visibility: hidden; }
+      .scmrow:hover .act2 { visibility: visible; }
+      #syncbar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+      .sbtn2 { margin-top: 0; padding: 4px 8px; font-size: 12px; }
+      #branchsel { background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+        border-radius: 4px; padding: 2px 4px; font: inherit; font-size: 12px; max-width: 200px; }
+      .scmsection { color: var(--muted); font-size: 11px; text-transform: uppercase;
+        letter-spacing: .5px; margin: 10px 2px 4px; }
+      .M { color: #e2c08d; } .A { color: #73c991; } .D { color: #f48771; } .U { color: #73c991; }
+      /* Search */
+      #searchq { width: 100%; background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+        border-radius: 4px; padding: 6px 8px; font: inherit; font-size: 13px; }
+      .smode { flex: 1; text-align: center; padding: 4px; font-size: 12px; cursor: pointer;
+        border: 1px solid var(--border); border-radius: 4px; color: var(--muted); user-select: none; }
+      .smode.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+      .sfile { padding: 4px 4px 2px; color: var(--muted); font-size: 12px; margin-top: 6px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+      .sfile:hover { color: var(--fg); }
+      .shit { padding: 2px 8px; cursor: pointer; border-radius: 3px; display: flex; gap: 8px;
+        font-family: ui-monospace, monospace; font-size: 12px; white-space: nowrap; overflow: hidden; }
+      .shit:hover { background: var(--hover); }
+      .shit .ln { color: var(--muted); min-width: 34px; text-align: right; }
+      .shit .tx { overflow: hidden; text-overflow: ellipsis; }
+      .sresfile { padding: 4px; cursor: pointer; color: var(--fg); font-size: 12px; margin-top: 8px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .sresfile:hover { text-decoration: underline; }
+      /* Commit history */
+      .commit { padding: 4px 6px; border-radius: 3px; cursor: pointer; }
+      .commit:hover { background: var(--hover); }
+      .commit .subj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .commit .meta { color: var(--muted); font-size: 11px; font-family: ui-monospace, monospace; }
+      .commitfiles { margin: 2px 0 6px 14px; }
+      .cfile { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 3px;
+        cursor: pointer; font-size: 12px; }
+      .cfile:hover { background: var(--hover); }
+      .cfile .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      /* Tabs + editor */
+      #tabs { display: flex; background: var(--tabbar); border-bottom: 1px solid var(--border);
+        overflow-x: auto; min-height: 35px; }
+      #tabs:empty::after { content: "No file open"; color: var(--muted); font-size: 12px; padding: 9px 12px; }
+      .tab { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 12px;
+        font-size: 13px; border-right: 1px solid var(--border); cursor: pointer;
+        white-space: nowrap; color: var(--muted); max-width: 220px; }
+      .tab.active { background: var(--bg); color: var(--fg); }
+      .tab .tname { overflow: hidden; text-overflow: ellipsis; }
+      .tab .close { width: 16px; height: 16px; border-radius: 3px; text-align: center;
+        line-height: 15px; font-size: 14px; color: var(--muted); }
+      .tab .close:hover { background: #ffffff22; color: var(--fg); }
+      .tab .close.dirty::before { content: "●"; font-size: 10px; color: #e2c08d; }
+      .tab .close.dirty:hover::before { content: "✕"; }
+      .tab .close:not(.dirty)::before { content: "✕"; }
+      #editorwrap { flex: 1; position: relative; min-height: 60px; }
+      #editor { position: absolute; inset: 0; }
+      #empty { position: absolute; inset: 0; display: flex; align-items: center;
+        justify-content: center; color: var(--muted); font-size: 14px; }
+      /* Terminal */
+      #termpanel { height: 220px; border-top: 1px solid var(--border); background: #05070d;
+        display: none; flex-direction: column; }
+      #termpanel.open { display: flex; }
+      .termhead { display: flex; justify-content: space-between; align-items: center;
+        padding: 4px 10px; font-size: 11px; text-transform: uppercase; color: var(--muted);
+        letter-spacing: .5px; border-bottom: 1px solid var(--border); }
+      #term { flex: 1; padding: 4px 6px; overflow: hidden; }
+      #status { padding: 6px 12px; font-size: 12px; color: var(--muted);
+        border-top: 1px solid var(--border); display: flex; gap: 14px; align-items: center; }
+      #status .sbtn { cursor: pointer; }
+      #status .sbtn:hover { color: var(--fg); }
+      #blame { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40vw; }
+      #vimstatus { color: var(--muted); font-family: ui-monospace, monospace; margin-left: 14px; }
+      #vimtoggle.on, #autosavetoggle.on { color: var(--fg); }
+      #claudespeak.on { color: var(--fg); }
+      #claudemic.on { color: #f48771; }
+      .blameghost { color: #3a597a !important; font-style: italic; opacity: .8; }
+      /* Diff line colors */
+      .diff-add { background: rgba(46, 160, 67, 0.22) !important; }
+      .diff-add-gutter { background: rgba(46, 160, 67, 0.5); }
+      .diff-del { background: rgba(248, 81, 73, 0.22) !important; }
+      .diff-del-gutter { background: rgba(248, 81, 73, 0.5); }
+      .diff-hunk { background: rgba(56, 139, 253, 0.18) !important; }
+      .diff-hdr { background: rgba(255, 255, 255, 0.04) !important; }
+      /* Claude Code panel */
+      #panel { background: #05070d; }
+      #claudeterm { flex: 1; padding: 4px 6px; overflow: hidden; }
+      button { background: var(--accent); color: #fff; border: 0; border-radius: 4px;
+        padding: 7px 12px; cursor: pointer; font-size: 13px; }
+      button:disabled { opacity: .5; cursor: default; }
+      button.ghost { background: transparent; border: 1px solid var(--border); color: var(--fg); }
+      .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <div id="modal">
+      <div class="mbox">
+        <div id="modaltitle"></div>
+        <input id="modalinput" autocomplete="off" spellcheck="false" />
+        <div class="mbtns">
+          <button id="modalcancel" class="ghost">Cancel</button>
+          <button id="modalok">OK</button>
+        </div>
+      </div>
+    </div>
+    <div id="ppmodal">
+      <div class="mbox" style="width:640px">
+        <div id="modaltitle2">Pre-prompt — injected into every Claude Code session</div>
+        <textarea id="pptext" spellcheck="false"></textarea>
+        <div class="mbtns">
+          <button id="ppreset" class="ghost" style="margin-right:auto">Reset to default</button>
+          <button id="ppcancel" class="ghost">Cancel</button>
+          <button id="ppsave">Save &amp; restart Claude</button>
+        </div>
+      </div>
+    </div>
+    <div id="ctxmenu"></div>
+    <div id="sidebar" class="col">
+      <div id="activity">
+        <div class="act active" data-view="explorer">Explorer</div>
+        <div class="act" data-view="search">Search</div>
+        <div class="act" data-view="scm">Source Control</div>
+      </div>
+
+      <div class="view active" id="explorerview">
+        <div class="head"><span id="rootname">Files</span><span class="iconbtn" id="newfile" title="New file">＋</span></div>
+        <div id="tree"></div>
+      </div>
+
+      <div class="view" id="searchview">
+        <div class="head"><span>Search</span></div>
+        <div id="searchbody" style="padding:8px; font-size:13px;">
+          <div id="searchmode" style="display:flex; gap:6px; margin-bottom:8px;">
+            <div class="smode active" data-mode="text">Text</div>
+            <div class="smode" data-mode="files">Files</div>
+          </div>
+          <input id="searchq" placeholder="Search…" autocomplete="off" />
+          <div id="searchopts" style="display:flex; gap:12px; margin-top:6px; color:var(--muted); font-size:12px;">
+            <label><input type="checkbox" id="optcase" /> Aa</label>
+            <label><input type="checkbox" id="optregex" /> .*</label>
+          </div>
+          <div id="searchresults" style="margin-top:10px;"></div>
+        </div>
+      </div>
+
+      <div class="view" id="scmview">
+        <div class="head"><select id="branchsel" title="Switch branch"></select><span class="iconbtn" id="refreshscm" title="Refresh">⟳</span></div>
+        <div id="scmbody">
+          <div id="syncbar">
+            <span id="syncstate" class="hint" style="margin:0;flex:1">—</span>
+            <button id="pullbtn" class="ghost sbtn2" title="git pull">⭳ Pull</button>
+            <button id="pushbtn" class="ghost sbtn2" title="git push">⭱ Push</button>
+            <button id="fetchbtn" class="ghost sbtn2" title="git fetch">⟳</button>
+          </div>
+          <textarea id="commitmsg" placeholder="Commit message"></textarea>
+          <button id="genmsg" class="ghost" style="width:100%">✨ Generate message (AI)</button>
+          <button id="commit" style="width:100%">✓ Commit staged</button>
+          <button id="stageall" class="ghost" style="width:100%">Stage all changes</button>
+          <button id="discardall" class="ghost" style="width:100%">↩ Discard all changes</button>
+          <div id="scmlist"></div>
+          <div class="scmsection" style="display:flex;justify-content:space-between;align-items:center">
+            <span>History</span><span class="iconbtn" id="refreshlog" title="Refresh history">⟳</span>
+          </div>
+          <div id="scmlog"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="main" class="col">
+      <div id="tabs"></div>
+      <div id="editorwrap"><div id="editor"></div><div id="empty">Open a file from the Explorer, or ＋ to create one.</div></div>
+      <div id="termpanel">
+        <div class="termhead"><span>Terminal</span><span class="iconbtn" id="termclose" title="Close">✕</span></div>
+        <div id="term"></div>
+      </div>
+      <div id="status">
+        <span id="filepath">No file open</span>
+        <span id="blame"></span>
+        <span id="vimstatus"></span>
+        <span class="sbtn" id="termtoggle" style="margin-left:auto">⌥ Terminal</span>
+        <span class="sbtn" id="vimtoggle">VIM: on</span>
+        <span class="sbtn" id="autosavetoggle">autosave: on</span>
+      </div>
+    </div>
+
+    <div id="panel" class="col">
+      <div class="head"><span>Claude Code</span><span>
+        <span class="iconbtn" id="claudemic" title="Dictate (speech → prompt)">🎤</span>
+        <span class="iconbtn" id="claudespeak" title="Speak AI output">🔈</span>
+        <span class="iconbtn" id="claudecfg" title="Edit pre-prompt">⚙</span>
+        <span class="iconbtn" id="clauderestart" title="Restart session">⟳</span>
+      </span></div>
+      <div id="claudeterm"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/loader.js"></script>
+    <script>
+      const $ = (id) => document.getElementById(id);
+
+      // Electron doesn't support window.prompt(); use an in-app modal instead.
+      function inputDialog(title, def = "") {
+        return new Promise((resolve) => {
+          const m = $("modal"), inp = $("modalinput");
+          $("modaltitle").textContent = title;
+          inp.value = def || "";
+          m.style.display = "flex";
+          setTimeout(() => { inp.focus(); inp.select(); }, 0);
+          const done = (val) => {
+            m.style.display = "none";
+            $("modalok").onclick = null; $("modalcancel").onclick = null; inp.onkeydown = null; m.onmousedown = null;
+            resolve(val);
+          };
+          $("modalok").onclick = () => done(inp.value);
+          $("modalcancel").onclick = () => done(null);
+          inp.onkeydown = (e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") { e.preventDefault(); done(inp.value); }
+            else if (e.key === "Escape") { e.preventDefault(); done(null); }
+          };
+          m.onmousedown = (e) => { if (e.target === m) done(null); }; // click backdrop = cancel
+        });
+      }
+      let editor;
+      const tabs = new Map(); // path -> { model, dirty, viewState, readOnly }
+      let active = null;
+
+      const EXT_LANG = { js:"javascript", jsx:"javascript", ts:"typescript", tsx:"typescript",
+        json:"json", html:"html", css:"css", scss:"scss", md:"markdown", php:"php", py:"python",
+        rb:"ruby", go:"go", rs:"rust", java:"java", sh:"shell", yml:"yaml", yaml:"yaml",
+        sql:"sql", xml:"xml", vue:"html" };
+      const langOf = (p) => EXT_LANG[p.split(".").pop().toLowerCase()] || "plaintext";
+      const baseName = (p) => p.split("/").pop();
+
+      let pendingOpen = null, vimMode = null, blameDeco = [], diffDeco = [], MonacoVimRef = null;
+      let vimEnabled = localStorage.getItem("vimMode") !== "off"; // default on
+
+      function enableVim() {
+        if (!MonacoVimRef || vimMode) return;
+        try { vimMode = MonacoVimRef.initVimMode(editor, $("vimstatus")); } catch (e) { console.error("vim init:", e); }
+      }
+      function disableVim() {
+        if (vimMode) { try { vimMode.dispose(); } catch {} vimMode = null; }
+        $("vimstatus").textContent = "";
+      }
+      function setVim(on) {
+        vimEnabled = on;
+        localStorage.setItem("vimMode", on ? "on" : "off");
+        $("vimtoggle").textContent = "VIM: " + (on ? "on" : "off");
+        $("vimtoggle").classList.toggle("on", on);
+        if (editor) { on ? enableVim() : disableVim(); }
+      }
+      $("vimtoggle").onclick = () => setVim(!vimEnabled);
+      setVim(vimEnabled); // set the initial label
+      require.config({ paths: {
+        vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs",
+        "monaco-vim": "https://cdn.jsdelivr.net/npm/monaco-vim@0.4.1/dist/monaco-vim",
+      } });
+      require(["vs/editor/editor.main"], () => {
+        monaco.editor.defineTheme("terminal", {
+          base: "vs-dark", inherit: true,
+          rules: [
+            { token: "", foreground: "5b93c7", background: "05070d" },
+            { token: "comment", foreground: "46688a", fontStyle: "italic" },
+            { token: "keyword", foreground: "8fb8e0" },
+            { token: "string", foreground: "9bc2e6" },
+            { token: "number", foreground: "b6d6f2" },
+          ],
+          colors: {
+            "editor.background": "#05070d",
+            "editor.foreground": "#5b93c7",
+            "editorLineNumber.foreground": "#2f4a66",
+            "editorCursor.foreground": "#5b93c7",
+            "editor.selectionBackground": "#1a3550",
+            "editor.lineHighlightBackground": "#0a1018",
+          },
+        });
+        editor = monaco.editor.create($("editor"), {
+          model: null, theme: "terminal", automaticLayout: true, minimap: { enabled: false },
+          fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+          // nvim-like view
+          lineNumbers: "relative",
+          cursorStyle: "block",
+          cursorBlinking: "solid",
+          renderLineHighlight: "all",
+          renderWhitespace: "selection",
+          scrollBeyondLastLine: false,
+          smoothScrolling: true,
+        });
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, save);
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => openSearch("text"));
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, openFileSearch);
+        editor.onDidChangeCursorPosition(updateBlame);
+        // Vim mode (nvim-style), toggleable and persisted. Status line shows the command/mode.
+        require(["monaco-vim"], (MonacoVim) => {
+          MonacoVimRef = MonacoVim;
+          if (vimEnabled) enableVim();
+        });
+        if (pendingOpen) { const [p, line] = pendingOpen; pendingOpen = null; openFile(p, line); }
+      });
+
+      // Load the file tree immediately — independent of Monaco and the terminals,
+      // so the Explorer always works even if a CDN script is slow or fails.
+      loadTree();
+
+      /* ---------- Activity switch ---------- */
+      document.querySelectorAll(".act").forEach((a) => {
+        a.onclick = () => {
+          document.querySelectorAll(".act").forEach((x) => x.classList.remove("active"));
+          a.classList.add("active");
+          const v = a.dataset.view;
+          $("explorerview").classList.toggle("active", v === "explorer");
+          $("searchview").classList.toggle("active", v === "search");
+          $("scmview").classList.toggle("active", v === "scm");
+          if (v === "scm") { refreshBranches(); refreshScm(); refreshLog(); refreshSync(); }
+          if (v === "search") $("searchq").focus();
+        };
+      });
+
+      /* ---------- Explorer ---------- */
+      async function loadTree() {
+        const { root, tree } = await (await fetch("/api/tree")).json();
+        $("rootname").textContent = root.split("/").pop();
+        $("rootname").title = root;
+        $("tree").innerHTML = "";
+        renderNodes(tree, $("tree"), 0);
+      }
+      // Right-click on empty tree space → create at root.
+      $("tree").addEventListener("contextmenu", (e) => {
+        if (e.target !== $("tree")) return; // node handlers cover nodes
+        e.preventDefault();
+        showCtxMenu(e.clientX, e.clientY, "");
+      });
+      function highlightTreeNode(p) {
+        document.querySelectorAll(".node.active").forEach((n) => n.classList.remove("active"));
+        document.querySelector(`.node[data-path="${CSS.escape(p)}"]`)?.classList.add("active");
+      }
+      function renderNodes(nodes, container, depth) {
+        for (const n of nodes) {
+          const el = document.createElement("div");
+          el.className = "node"; el.style.paddingLeft = 8 + depth * 12 + "px";
+          el.dataset.path = n.path; el.dataset.type = n.type;
+          if (n.type === "dir") {
+            let open = false;
+            const kids = document.createElement("div"); kids.style.display = "none";
+            el.innerHTML = `<span class="caret">▸</span>${n.name}`;
+            el.onclick = () => { open = !open; kids.style.display = open ? "block" : "none";
+              el.querySelector(".caret").textContent = open ? "▾" : "▸"; };
+            // Right-click a folder → create inside it, or rename/delete it.
+            el.oncontextmenu = (e) => { e.preventDefault(); e.stopPropagation(); showCtxMenu(e.clientX, e.clientY, n.path, n); };
+            container.appendChild(el); renderNodes(n.children || [], kids, depth + 1); container.appendChild(kids);
+          } else {
+            el.innerHTML = `<span class="caret"></span>${n.name}`;
+            el.onclick = () => openFile(n.path);
+            // Right-click a file → create in its parent folder.
+            el.oncontextmenu = (e) => {
+              e.preventDefault(); e.stopPropagation();
+              const parent = n.path.includes("/") ? n.path.slice(0, n.path.lastIndexOf("/")) : "";
+              showCtxMenu(e.clientX, e.clientY, parent, n);
+            };
+            container.appendChild(el);
+          }
+        }
+      }
+
+      /* ---------- Create files / folders + context menu ---------- */
+      const joinPath = (base, name) => (base ? base + "/" + name : name);
+      async function createEntry(base, kind) {
+        const where = base ? ` in ${base}/` : " at root";
+        const name = await inputDialog((kind === "folder" ? "New folder name" : "New file name") + where + ":");
+        if (!name?.trim()) return;
+        const rel = joinPath(base, name.trim());
+        const url = kind === "folder" ? "/api/create-folder" : "/api/create-file";
+        const data = await (await fetch(url, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: rel }),
+        })).json();
+        if (data.error) return alert(data.error);
+        await loadTree();
+        if (kind === "file") openFile(data.path);
+      }
+      function showCtxMenu(x, y, base, target) {
+        const m = $("ctxmenu");
+        m.innerHTML = "";
+        const where = base ? `in ${base}/` : "at root";
+        const mk = (label, fn, cls) => {
+          const it = document.createElement("div");
+          it.className = "mi" + (cls ? " " + cls : ""); it.textContent = label;
+          it.onclick = () => { hideCtxMenu(); fn(); };
+          m.appendChild(it);
+        };
+        const sep = () => { const s = document.createElement("div"); s.className = "sep"; m.appendChild(s); };
+        mk("New File… (" + where + ")", () => createEntry(base, "file"));
+        mk("New Folder… (" + where + ")", () => createEntry(base, "folder"));
+        if (target) {
+          sep();
+          mk("Rename…", () => renameEntry(target));
+          mk("Delete", () => deleteEntry(target), "danger");
+        }
+        m.style.display = "block";
+        // Keep within viewport.
+        const w = m.offsetWidth, h = m.offsetHeight;
+        m.style.left = Math.min(x, window.innerWidth - w - 6) + "px";
+        m.style.top = Math.min(y, window.innerHeight - h - 6) + "px";
+      }
+      function closeTabsUnder(p) {
+        // Close the file's tab, or any tab under a renamed/deleted folder.
+        for (const key of [...tabs.keys()]) {
+          if (key === p || key.startsWith(p + "/")) {
+            tabs.get(key).model.dispose(); tabs.delete(key);
+            if (active === key) { active = null; editor && editor.setModel(null); $("empty").style.display = "flex"; $("filepath").textContent = "No file open"; }
+          }
+        }
+        renderTabs();
+      }
+      async function renameEntry(target) {
+        const cur = target.path;
+        const parent = cur.includes("/") ? cur.slice(0, cur.lastIndexOf("/")) : "";
+        const oldName = cur.slice(cur.lastIndexOf("/") + 1);
+        const name = await inputDialog("Rename to:", oldName);
+        if (!name?.trim() || name.trim() === oldName) return;
+        const to = joinPath(parent, name.trim());
+        const data = await (await fetch("/api/rename", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ from: cur, to }),
+        })).json();
+        if (data.error) return alert(data.error);
+        closeTabsUnder(cur);
+        await loadTree();
+        if (target.type === "file") openFile(to);
+      }
+      async function deleteEntry(target) {
+        const kind = target.type === "dir" ? "folder" : "file";
+        if (!confirm(`Delete ${kind} "${target.path}"?\n\nThis cannot be undone.`)) return;
+        const data = await (await fetch("/api/delete", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: target.path }),
+        })).json();
+        if (data.error) return alert(data.error);
+        closeTabsUnder(target.path);
+        await loadTree();
+      }
+      function hideCtxMenu() { $("ctxmenu").style.display = "none"; }
+      window.addEventListener("click", hideCtxMenu);
+      window.addEventListener("keydown", (e) => { if (e.key === "Escape") hideCtxMenu(); });
+      window.addEventListener("blur", hideCtxMenu);
+
+      /* ---------- Tabs / editor ---------- */
+      async function openFile(p, line) {
+        if (!editor) { pendingOpen = [p, line]; return; } // wait for Monaco
+        if (tabs.has(p)) { activate(p); return gotoLine(line); }
+        const data = await (await fetch("/api/file?path=" + encodeURIComponent(p))).json();
+        if (data.error) return alert(data.error);
+        const model = monaco.editor.createModel(data.content, langOf(p));
+        const entry = { model, dirty: false, viewState: null, readOnly: false, blame: [], _t: null };
+        model.onDidChangeContent(() => {
+          if (!entry.dirty) { entry.dirty = true; renderTabs(); }
+          scheduleAutosave(p);
+        });
+        tabs.set(p, entry); activate(p); renderTabs(); gotoLine(line);
+        loadBlame(p);
+      }
+      async function loadBlame(p) {
+        const entry = tabs.get(p);
+        if (!entry || entry.readOnly) return;
+        try {
+          const b = await (await fetch("/api/git/blame?path=" + encodeURIComponent(p))).json();
+          entry.blame = b.lines || [];
+          if (active === p) updateBlame();
+        } catch { /* blame optional */ }
+      }
+      function updateBlame() {
+        if (!editor || !active) return;
+        const entry = tabs.get(active);
+        const pos = editor.getPosition();
+        const info = entry && entry.blame && pos ? entry.blame[pos.lineNumber - 1] : null;
+        if (!info) { $("blame").textContent = ""; blameDeco = editor.deltaDecorations(blameDeco, []); return; }
+        const date = info.time ? new Date(info.time * 1000).toISOString().slice(0, 10) : "";
+        const text = `${info.author}${date ? ", " + date : ""}${info.summary ? " · " + info.summary : ""}`;
+        $("blame").textContent = text;
+        const col = editor.getModel().getLineMaxColumn(pos.lineNumber);
+        blameDeco = editor.deltaDecorations(blameDeco, [{
+          range: new monaco.Range(pos.lineNumber, col, pos.lineNumber, col),
+          options: { after: { content: "    " + text, inlineClassName: "blameghost" } },
+        }]);
+      }
+      let autosaveTimers = {};
+      let autosaveEnabled = localStorage.getItem("autosave") !== "off"; // default on
+      function scheduleAutosave(p) {
+        if (!autosaveEnabled) return;
+        clearTimeout(autosaveTimers[p]);
+        autosaveTimers[p] = setTimeout(() => saveTab(p), 800);
+      }
+      function setAutosave(on) {
+        autosaveEnabled = on;
+        localStorage.setItem("autosave", on ? "on" : "off");
+        $("autosavetoggle").textContent = "autosave: " + (on ? "on" : "off");
+        $("autosavetoggle").classList.toggle("on", on);
+      }
+      $("autosavetoggle").onclick = () => setAutosave(!autosaveEnabled);
+      setAutosave(autosaveEnabled);
+      async function saveTab(p) {
+        const entry = tabs.get(p);
+        if (!entry || entry.readOnly) return;
+        clearTimeout(autosaveTimers[p]);
+        const res = await fetch("/api/file", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ path: p, content: entry.model.getValue() }),
+        });
+        if ((await res.json()).ok) { entry.dirty = false; renderTabs(); loadBlame(p); }
+      }
+      function gotoLine(line) {
+        if (!line) return;
+        editor.revealLineInCenter(line);
+        editor.setPosition({ lineNumber: line, column: 1 });
+        editor.focus();
+      }
+      async function openDiff(p) {
+        const key = "◧ " + p;
+        if (tabs.has(key)) return activate(key);
+        const data = await (await fetch("/api/git/diff?path=" + encodeURIComponent(p))).json();
+        const text = data.diff || data.error || "(no changes)";
+        const model = monaco.editor.createModel(text, "diff");
+        tabs.set(key, { model, dirty: false, viewState: null, readOnly: true, isDiff: true });
+        activate(key); renderTabs();
+      }
+      function activate(p) {
+        if (active && tabs.has(active)) tabs.get(active).viewState = editor.saveViewState();
+        active = p; const entry = tabs.get(p);
+        editor.setModel(entry.model);
+        editor.updateOptions({ readOnly: !!entry.readOnly });
+        if (entry.viewState) editor.restoreViewState(entry.viewState);
+        editor.focus();
+        $("empty").style.display = "none";
+        $("filepath").textContent = p;
+        highlightTreeNode(p); renderTabs();
+        blameDeco = editor.deltaDecorations(blameDeco, []);
+        updateBlame();
+        applyDiffDecos();
+      }
+      function applyDiffDecos() {
+        if (!editor) return;
+        const entry = active && tabs.get(active);
+        if (!entry || !entry.isDiff) { diffDeco = editor.deltaDecorations(diffDeco, []); return; }
+        const model = editor.getModel();
+        const cap = Math.min(model.getLineCount(), 8000);
+        const decos = [];
+        for (let i = 1; i <= cap; i++) {
+          const t = model.getLineContent(i);
+          let cls = null, gutter = null;
+          if (t.startsWith("+++") || t.startsWith("---") || t.startsWith("diff ") || t.startsWith("index ")) cls = "diff-hdr";
+          else if (t.startsWith("@@")) cls = "diff-hunk";
+          else if (t.startsWith("+")) { cls = "diff-add"; gutter = "diff-add-gutter"; }
+          else if (t.startsWith("-")) { cls = "diff-del"; gutter = "diff-del-gutter"; }
+          if (cls) decos.push({ range: new monaco.Range(i, 1, i, 1),
+            options: { isWholeLine: true, className: cls, linesDecorationsClassName: gutter || undefined } });
+        }
+        diffDeco = editor.deltaDecorations(diffDeco, decos);
+      }
+      function closeTab(p) {
+        const entry = tabs.get(p); if (!entry) return;
+        if (entry.dirty && !confirm(`${baseName(p)} has unsaved changes. Close anyway?`)) return;
+        entry.model.dispose(); tabs.delete(p);
+        if (active === p) {
+          const next = [...tabs.keys()].pop() || null;
+          if (next) activate(next);
+          else { active = null; editor.setModel(null); $("empty").style.display = "flex"; $("filepath").textContent = "No file open"; }
+        }
+        renderTabs();
+      }
+      function renderTabs() {
+        const bar = $("tabs"); bar.innerHTML = "";
+        for (const [p, entry] of tabs) {
+          const tab = document.createElement("div");
+          tab.className = "tab" + (p === active ? " active" : ""); tab.title = p;
+          tab.onclick = () => activate(p);
+          const name = document.createElement("span"); name.className = "tname"; name.textContent = baseName(p);
+          const close = document.createElement("span");
+          close.className = "close" + (entry.dirty ? " dirty" : "");
+          close.onclick = (e) => { e.stopPropagation(); closeTab(p); };
+          tab.append(name, close); bar.appendChild(tab);
+        }
+      }
+      function save() { if (active) saveTab(active); }
+      $("newfile").onclick = () => createEntry("", "file");
+
+      /* ---------- Source Control ---------- */
+      async function refreshScm() {
+        const data = await (await fetch("/api/git/status")).json();
+        const list = $("scmlist"); list.innerHTML = "";
+        if (!data.repo) { $("branchsel").innerHTML = "<option>not a git repo</option>"; return; }
+        const staged = data.files.filter((f) => f.staged);
+        const changes = data.files.filter((f) => f.unstaged || f.untracked);
+        if (staged.length) {
+          list.appendChild(section("Staged"));
+          staged.forEach((f) => list.appendChild(scmRow(f, true)));
+        }
+        if (changes.length) {
+          list.appendChild(section("Changes"));
+          changes.forEach((f) => list.appendChild(scmRow(f, false)));
+        }
+        if (!staged.length && !changes.length) {
+          const el = document.createElement("div"); el.className = "hint"; el.textContent = "No changes.";
+          list.appendChild(el);
+        }
+      }
+      function section(t) { const d = document.createElement("div"); d.className = "scmsection"; d.textContent = t; return d; }
+      function scmRow(f, isStaged) {
+        const row = document.createElement("div"); row.className = "scmrow";
+        const letter = f.untracked ? "U" : (isStaged ? f.index : f.work);
+        row.innerHTML = `<span class="st ${letter}">${letter}</span><span class="fname" title="${f.path}">${f.path}</span>`;
+        row.onclick = () => (f.untracked ? openFile(f.path) : openDiff(f.path));
+        const btn = document.createElement("span"); btn.className = "act2 iconbtn";
+        btn.textContent = isStaged ? "−" : "＋";
+        btn.title = isStaged ? "Unstage" : "Stage";
+        btn.onclick = async (e) => {
+          e.stopPropagation();
+          await fetch(isStaged ? "/api/git/unstage" : "/api/git/stage", { method: "POST",
+            headers: { "content-type": "application/json" }, body: JSON.stringify({ path: f.path }) });
+          refreshScm();
+        };
+        // Rollback (discard) this file's changes.
+        const disc = document.createElement("span"); disc.className = "act2 iconbtn";
+        disc.textContent = "↩"; disc.title = "Discard changes (rollback)";
+        disc.onclick = async (e) => {
+          e.stopPropagation();
+          if (!confirm(`Discard changes in "${f.path}"?\n\nThis cannot be undone.`)) return;
+          const d = await (await fetch("/api/git/discard", { method: "POST",
+            headers: { "content-type": "application/json" }, body: JSON.stringify({ path: f.path }) })).json();
+          if (d.error) return alert(d.error);
+          closeTabsUnder(f.path);         // reload editor content if open
+          refreshScm(); refreshLog(); refreshSync();
+        };
+        row.append(btn, disc); return row;
+      }
+      async function refreshLog() {
+        const data = await (await fetch("/api/git/log")).json();
+        const box = $("scmlog"); box.innerHTML = "";
+        if (!data.repo) return;
+        if (!data.commits.length) { box.innerHTML = '<div class="hint">No commits yet.</div>'; return; }
+        for (const c of data.commits) {
+          const el = document.createElement("div");
+          el.className = "commit"; el.title = `${c.hash} — ${c.author}, ${c.date}`;
+          const subj = document.createElement("div"); subj.className = "subj";
+          subj.innerHTML = '<span class="caret">▸</span>';
+          subj.append(document.createTextNode(c.subject));
+          const meta = document.createElement("div"); meta.className = "meta";
+          meta.textContent = `${c.hash} · ${c.author} · ${c.date}`;
+          el.append(subj, meta);
+
+          const files = document.createElement("div");
+          files.className = "commitfiles"; files.style.display = "none";
+          let loaded = false, open = false;
+          el.onclick = async () => {
+            open = !open;
+            files.style.display = open ? "block" : "none";
+            subj.querySelector(".caret").textContent = open ? "▾" : "▸";
+            if (open && !loaded) {
+              loaded = true;
+              const d = await (await fetch("/api/git/commit-files?hash=" + encodeURIComponent(c.hash))).json();
+              files.innerHTML = "";
+              (d.files || []).forEach((f) => {
+                const row = document.createElement("div");
+                row.className = "cfile";
+                row.innerHTML = `<span class="st ${f.status}">${f.status}</span>`;
+                const nm = document.createElement("span"); nm.className = "fname"; nm.textContent = f.path; nm.title = f.path;
+                row.appendChild(nm);
+                row.onclick = (e) => { e.stopPropagation(); openCommitFile(c.hash, f.path); };
+                files.appendChild(row);
+              });
+              if (!files.children.length) files.innerHTML = '<div class="hint">No files.</div>';
+            }
+          };
+          box.append(el, files);
+        }
+      }
+      async function openCommitFile(hash, p) {
+        const key = `⎇ ${hash}:${p}`;
+        if (tabs.has(key)) return activate(key);
+        const data = await (await fetch(
+          `/api/git/show?hash=${encodeURIComponent(hash)}&path=${encodeURIComponent(p)}`,
+        )).json();
+        const model = monaco.editor.createModel(data.diff || data.error || "(no output)", "diff");
+        tabs.set(key, { model, dirty: false, viewState: null, readOnly: true, isDiff: true });
+        activate(key); renderTabs();
+      }
+      function renderSync(s) {
+        const el = $("syncstate");
+        if (!s || !s.repo) { el.textContent = ""; return; }
+        if (!s.upstream) { el.textContent = "no upstream"; return; }
+        const parts = [];
+        if (s.behind) parts.push(`⭳ ${s.behind}`);
+        if (s.ahead) parts.push(`⭱ ${s.ahead}`);
+        el.textContent = parts.length ? parts.join("  ") + `  (${s.upstream})` : `up to date (${s.upstream})`;
+      }
+      async function refreshSync() {
+        renderSync(await (await fetch("/api/git/sync")).json());
+      }
+      async function gitNet(op, btn) {
+        const b = $(btn); const label = b.textContent; b.disabled = true; b.textContent = "…";
+        try {
+          const data = await (await fetch("/api/git/" + op, { method: "POST" })).json();
+          if (data.error) alert(data.error);
+          else renderSync({ repo: true, ...data });
+        } finally { b.disabled = false; b.textContent = label; }
+        refreshScm(); refreshLog();
+      }
+      $("pullbtn").onclick = () => gitNet("pull", "pullbtn");
+      $("pushbtn").onclick = () => gitNet("push", "pushbtn");
+      $("fetchbtn").onclick = () => gitNet("fetch", "fetchbtn");
+
+      const NEW_BRANCH = "\x00new";
+      async function refreshBranches() {
+        const data = await (await fetch("/api/git/branches")).json();
+        const sel = $("branchsel"); sel.innerHTML = "";
+        if (!data.repo) { sel.innerHTML = "<option>not a git repo</option>"; return; }
+        for (const b of data.branches) {
+          const opt = document.createElement("option");
+          opt.value = b; opt.textContent = b; if (b === data.current) opt.selected = true;
+          sel.appendChild(opt);
+        }
+        const nb = document.createElement("option");
+        nb.value = NEW_BRANCH; nb.textContent = "＋ New branch…";
+        sel.appendChild(nb);
+        sel.dataset.current = data.current;
+      }
+      $("branchsel").onchange = async (e) => {
+        const sel = e.target;
+        const val = sel.value;
+        let body;
+        if (val === NEW_BRANCH) {
+          const name = await inputDialog("New branch name:");
+          if (!name?.trim()) { sel.value = sel.dataset.current; return; }
+          body = { branch: name.trim(), create: true };
+        } else {
+          if (val === sel.dataset.current) return;
+          body = { branch: val };
+        }
+        const data = await (await fetch("/api/git/checkout", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        })).json();
+        if (data.error) { alert(data.error); sel.value = sel.dataset.current; return; }
+        refreshBranches(); refreshScm(); refreshLog();
+      };
+      $("refreshlog").onclick = refreshLog;
+      $("refreshscm").onclick = () => { refreshBranches(); refreshScm(); refreshLog(); refreshSync(); };
+      $("stageall").onclick = async () => {
+        await fetch("/api/git/stage", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+        refreshScm();
+      };
+      $("discardall").onclick = async () => {
+        if (!confirm("Discard ALL tracked changes (staged and unstaged)?\n\nThis cannot be undone. Untracked files are left alone.")) return;
+        const d = await (await fetch("/api/git/discard", { method: "POST",
+          headers: { "content-type": "application/json" }, body: "{}" })).json();
+        if (d.error) return alert(d.error);
+        // Reload any open tabs to reflect reverted content.
+        for (const key of [...tabs.keys()]) { if (!tabs.get(key).readOnly) closeTabsUnder(key); }
+        refreshScm(); refreshLog(); refreshSync();
+      };
+      $("genmsg").onclick = async () => {
+        const b = $("genmsg"); const label = b.textContent;
+        b.disabled = true; b.textContent = "Generating…";
+        try {
+          const data = await (await fetch("/api/git/gen-commit-message", { method: "POST" })).json();
+          if (data.error) alert(data.error);
+          else $("commitmsg").value = data.message || "";
+        } finally { b.disabled = false; b.textContent = label; }
+      };
+      $("commit").onclick = async () => {
+        const message = $("commitmsg").value.trim();
+        if (!message) return alert("Enter a commit message.");
+        const data = await (await fetch("/api/git/commit", { method: "POST",
+          headers: { "content-type": "application/json" }, body: JSON.stringify({ message }) })).json();
+        if (data.error) return alert(data.error);
+        $("commitmsg").value = ""; refreshScm(); refreshLog(); refreshSync();
+      };
+
+      /* ---------- Search ---------- */
+      function openSearch(mode) {
+        document.querySelector('.act[data-view="search"]').click();
+        if (mode) document.querySelector(`.smode[data-mode="${mode}"]`)?.click();
+        const q = $("searchq");
+        q.focus(); q.select();
+      }
+      function openFileSearch() { return openSearch("files"); } // ⌘P — find files by name
+      // Global shortcuts so they work even when focus is outside Monaco.
+      window.addEventListener("keydown", (e) => {
+        if (!(e.metaKey || e.ctrlKey)) return;
+        const k = e.key.toLowerCase();
+        if (e.shiftKey && k === "f") { e.preventDefault(); openSearch("text"); }
+        else if (!e.shiftKey && k === "p") { e.preventDefault(); openFileSearch(); }
+      });
+
+      let searchMode = "text";
+      document.querySelectorAll(".smode").forEach((m) => {
+        m.onclick = () => {
+          document.querySelectorAll(".smode").forEach((x) => x.classList.remove("active"));
+          m.classList.add("active");
+          searchMode = m.dataset.mode;
+          $("searchopts").style.display = searchMode === "text" ? "flex" : "none";
+          runSearch();
+        };
+      });
+      let searchTimer;
+      $("searchq").oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(runSearch, 250); };
+      $("optcase").onchange = runSearch;
+      $("optregex").onchange = runSearch;
+
+      async function runSearch() {
+        const q = $("searchq").value.trim();
+        const box = $("searchresults");
+        box.innerHTML = "";
+        if (!q) return;
+        if (searchMode === "files") {
+          const data = await (await fetch("/api/search/files?q=" + encodeURIComponent(q))).json();
+          if (!data.files.length) { box.innerHTML = '<div class="hint">No files found.</div>'; return; }
+          const summary = document.createElement("div");
+          summary.className = "hint";
+          summary.textContent =
+            `${data.files.length}${data.files.length >= 200 ? "+" : ""} of ${data.total} files`;
+          box.appendChild(summary);
+          for (const p of data.files) {
+            const el = document.createElement("div");
+            el.className = "sresfile"; el.textContent = p; el.title = p;
+            el.onclick = () => openFile(p);
+            box.appendChild(el);
+          }
+        } else {
+          const params = new URLSearchParams({ q });
+          if ($("optcase").checked) params.set("case", "1");
+          if ($("optregex").checked) params.set("regex", "1");
+          const data = await (await fetch("/api/search/text?" + params)).json();
+          if (data.error) { box.innerHTML = `<div class="err">${data.error}</div>`; return; }
+          if (!data.results.length) { box.innerHTML = '<div class="hint">No matches.</div>'; return; }
+          const totalMatches = data.results.reduce((n, r) => n + r.matches.length, 0);
+          const summary = document.createElement("div");
+          summary.className = "hint";
+          summary.textContent =
+            `${totalMatches}${data.truncated ? "+" : ""} result${totalMatches === 1 ? "" : "s"} in ` +
+            `${data.results.length} file${data.results.length === 1 ? "" : "s"}`;
+          box.appendChild(summary);
+          for (const r of data.results) {
+            const fileEl = document.createElement("div");
+            fileEl.className = "sfile"; fileEl.textContent = r.path; fileEl.title = r.path;
+            fileEl.onclick = () => openFile(r.path, r.matches[0].line);
+            box.appendChild(fileEl);
+            for (const m of r.matches) {
+              const hit = document.createElement("div");
+              hit.className = "shit";
+              hit.innerHTML = `<span class="ln">${m.line}</span><span class="tx"></span>`;
+              hit.querySelector(".tx").textContent = m.text.trim();
+              hit.onclick = () => openFile(r.path, m.line);
+              box.appendChild(hit);
+            }
+          }
+          if (data.truncated) {
+            const t = document.createElement("div"); t.className = "hint";
+            t.textContent = "Results truncated (too many matches).";
+            box.appendChild(t);
+          }
+        }
+      }
+
+      /* ---------- Terminals (shared factory) ---------- */
+      // Creates an xterm bound to a WS PTY endpoint. Returns { term, fit, connect, dispose }.
+      function makeTerminal(containerId, wsPath, onData) {
+        const term = new Terminal({
+          fontSize: 13,
+          fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+          cursorBlink: true,
+          theme: {
+            background: "#05070d", foreground: "#5b93c7", cursor: "#5b93c7",
+            selectionBackground: "#1a3550", black: "#05070d", blue: "#5b93c7",
+            brightBlue: "#8fb8e0", white: "#a6cdf0", brightWhite: "#d6e8f8",
+          },
+        });
+        const fit = new FitAddon.FitAddon();
+        term.loadAddon(fit);
+        term.open($(containerId));
+        let ws;
+        const sendResize = () => { if (ws?.readyState === WebSocket.OPEN) ws.send(`\x00resize:${term.cols},${term.rows}`); };
+        const dataDisp = term.onData((d) => ws?.readyState === WebSocket.OPEN && ws.send(d));
+        term.onResize(sendResize);
+        function connect() {
+          const proto = location.protocol === "https:" ? "wss" : "ws";
+          ws = new WebSocket(`${proto}://${location.host}${wsPath}`);
+          ws.onmessage = (e) => {
+            const s = typeof e.data === "string" ? e.data : "";
+            term.write(s);
+            if (onData) try { onData(s); } catch {}
+          };
+          ws.onopen = () => sendResize();
+        }
+        function fitNow() { try { fit.fit(); sendResize(); } catch {} }
+        const send = (d) => { if (ws?.readyState === WebSocket.OPEN) ws.send(d); term.focus(); };
+        return { term, fit, connect, fitNow, send, reset: () => { ws?.close(); term.reset(); connect(); } };
+      }
+
+      /* Bottom shell terminal (lazy — only when opened) */
+      let shellTerm = null;
+      function toggleTerminal() {
+        const p = $("termpanel"); const open = p.classList.toggle("open");
+        if (open) {
+          if (!shellTerm) { shellTerm = makeTerminal("term", "/terminal"); shellTerm.connect(); }
+          setTimeout(() => { shellTerm.fitNow(); shellTerm.term.focus(); }, 50);
+        }
+      }
+      $("termtoggle").onclick = toggleTerminal;
+      $("termclose").onclick = () => $("termpanel").classList.remove("open");
+
+      /* Text-to-speech of Claude output */
+      let speakEnabled = localStorage.getItem("speak") === "on"; // default off
+      let speakBuf = "";
+      const stripAnsi = (s) => s
+        .replace(/\x1b\][0-9];[^\x07\x1b]*(\x07|\x1b\\)/g, "") // OSC
+        .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")             // CSI
+        .replace(/\x1b[@-Z\\-_]/g, "")                          // other escapes
+        .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");             // control chars (keep \n \t)
+      function speak(text) {
+        if (!window.speechSynthesis) return;
+        const u = new SpeechSynthesisUtterance(text);
+        u.rate = 1.05;
+        window.speechSynthesis.speak(u);
+      }
+      function onClaudeData(chunk) {
+        if (!speakEnabled) return;
+        speakBuf += stripAnsi(chunk);
+        const nl = speakBuf.lastIndexOf("\n");
+        if (nl === -1) { if (speakBuf.length > 2000) speakBuf = speakBuf.slice(-2000); return; }
+        const ready = speakBuf.slice(0, nl);
+        speakBuf = speakBuf.slice(nl + 1);
+        for (const line of ready.split("\n")) {
+          const t = line.trim();
+          // Skip empty, box-drawing, prompt noise; speak real sentences.
+          if (t.length >= 3 && /[a-zA-Z]/.test(t) && !/^[>│─╭╮╰╯┃╌•\-=_*\s]+$/.test(t)) speak(t);
+        }
+      }
+      function setSpeak(on) {
+        speakEnabled = on;
+        localStorage.setItem("speak", on ? "on" : "off");
+        $("claudespeak").textContent = on ? "🔊" : "🔈";
+        $("claudespeak").classList.toggle("on", on);
+        if (!on && window.speechSynthesis) { window.speechSynthesis.cancel(); speakBuf = ""; }
+      }
+      $("claudespeak").onclick = () => setSpeak(!speakEnabled);
+      setSpeak(speakEnabled);
+
+      /* Speech-to-text → Claude prompt */
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      let recog = null, listening = false;
+      function toggleMic() {
+        if (!SR) { alert("Speech recognition isn't available in this build. (Works in the browser build; Electron may lack it.)"); return; }
+        if (listening) { recog && recog.stop(); return; }
+        recog = new SR();
+        recog.lang = "en-US";
+        recog.interimResults = false;
+        recog.continuous = false;
+        recog.onstart = () => { listening = true; $("claudemic").textContent = "🔴"; $("claudemic").classList.add("on"); };
+        const stop = () => { listening = false; $("claudemic").textContent = "🎤"; $("claudemic").classList.remove("on"); };
+        recog.onend = stop;
+        recog.onerror = (e) => { stop(); if (e.error !== "no-speech" && e.error !== "aborted") console.error("speech:", e.error); };
+        recog.onresult = (e) => {
+          const transcript = Array.from(e.results).map((r) => r[0].transcript).join(" ").trim();
+          if (transcript && claudeTerm) claudeTerm.send(transcript + " "); // fill prompt, no Enter
+        };
+        try { recog.start(); } catch (err) { console.error("mic start:", err); }
+      }
+      $("claudemic").onclick = toggleMic;
+
+      /* Right-side Claude Code terminal */
+      let claudeTerm = null;
+      function initClaude() {
+        try {
+          if (typeof Terminal === "undefined" || typeof FitAddon === "undefined") return;
+          claudeTerm = makeTerminal("claudeterm", "/claude", onClaudeData);
+          claudeTerm.connect();
+          setTimeout(() => claudeTerm.fitNow(), 60);
+        } catch (e) {
+          console.error("Claude terminal init failed:", e);
+        }
+      }
+      $("clauderestart").onclick = () => claudeTerm && claudeTerm.reset();
+
+      /* Pre-prompt editor */
+      let ppDefault = "";
+      async function openPrePrompt() {
+        const data = await (await fetch("/api/preprompt")).json();
+        ppDefault = data.default || "";
+        $("pptext").value = data.prompt || "";
+        $("ppmodal").style.display = "flex";
+        setTimeout(() => $("pptext").focus(), 0);
+      }
+      $("claudecfg").onclick = openPrePrompt;
+      $("ppcancel").onclick = () => ($("ppmodal").style.display = "none");
+      $("ppreset").onclick = () => ($("pptext").value = ppDefault);
+      $("ppsave").onclick = async () => {
+        const data = await (await fetch("/api/preprompt", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ prompt: $("pptext").value }),
+        })).json();
+        if (data.error) return alert(data.error);
+        $("ppmodal").style.display = "none";
+        if (claudeTerm) claudeTerm.reset(); // relaunch claude so the new pre-prompt takes effect
+      };
+      $("pptext") && $("pptext").addEventListener("keydown", (e) => e.stopPropagation());
+      window.addEventListener("resize", () => {
+        claudeTerm && claudeTerm.fitNow();
+        if ($("termpanel").classList.contains("open")) shellTerm && shellTerm.fitNow();
+      });
+
+      // Start the Claude Code session after the page has settled, isolated so a
+      // terminal failure can never block the editor/Explorer from loading.
+      setTimeout(initClaude, 0);
+    </script>
+  </body>
+</html>
