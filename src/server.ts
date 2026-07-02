@@ -37,6 +37,8 @@ const DEFAULT_ROUTER_PROMPT = [
 
 const CONFIG_DIR = path.join(os.homedir(), ".prompt-router");
 const PREPROMPT_FILE = path.join(CONFIG_DIR, "preprompt.txt");
+const SKILLS_FILE = path.join(CONFIG_DIR, "skills.json");
+const AGENTS_FILE = path.join(CONFIG_DIR, "agents.json");
 
 /** The effective pre-prompt: saved file → env override → built-in default. */
 async function getPrePrompt(): Promise<string> {
@@ -52,6 +54,153 @@ async function getPrePrompt(): Promise<string> {
 async function savePrePrompt(text: string): Promise<void> {
   await fs.mkdir(CONFIG_DIR, { recursive: true });
   await fs.writeFile(PREPROMPT_FILE, text, "utf8");
+}
+
+interface SkillInfo {
+  name: string;
+  description: string;
+  source: "project" | "user";
+}
+
+/** Parse `name:` and `description:` from a SKILL.md YAML frontmatter block. */
+function parseSkillFrontmatter(md: string): { name?: string; description?: string } {
+  const fm = md.match(/^---\s*\n([\s\S]*?)\n---/);
+  if (!fm) return {};
+  const grab = (key: string) => {
+    const m = fm[1].match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
+    return m ? m[1].trim().replace(/^["']|["']$/g, "") : undefined;
+  };
+  return { name: grab("name"), description: grab("description") };
+}
+
+/** Discover skills from a `<dir>/skills/<name>/SKILL.md` layout, tagged with a source. */
+async function discoverSkillsIn(skillsDir: string, source: SkillInfo["source"]): Promise<SkillInfo[]> {
+  const out: SkillInfo[] = [];
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(skillsDir, { withFileTypes: true });
+  } catch {
+    return out; // directory missing → no skills
+  }
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    try {
+      const md = await fs.readFile(path.join(skillsDir, ent.name, "SKILL.md"), "utf8");
+      const { name, description } = parseSkillFrontmatter(md);
+      out.push({ name: name || ent.name, description: description || "", source });
+    } catch {
+      // no SKILL.md in this dir → skip
+    }
+  }
+  return out;
+}
+
+/** All skills available to the launched session: project `.claude/skills` + user `~/.claude/skills`. */
+async function discoverSkills(root: string): Promise<SkillInfo[]> {
+  const [project, user] = await Promise.all([
+    discoverSkillsIn(path.join(root, ".claude", "skills"), "project"),
+    discoverSkillsIn(path.join(os.homedir(), ".claude", "skills"), "user"),
+  ]);
+  // Project skills shadow user skills of the same name.
+  const byName = new Map<string, SkillInfo>();
+  for (const s of [...user, ...project]) byName.set(s.name, s);
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Discover agents from a `<dir>/agents/<name>.md` layout (frontmatter name/description). */
+async function discoverAgentsIn(agentsDir: string, source: SkillInfo["source"]): Promise<SkillInfo[]> {
+  const out: SkillInfo[] = [];
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(agentsDir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const ent of entries) {
+    if (!ent.isFile() || !ent.name.endsWith(".md")) continue;
+    try {
+      const md = await fs.readFile(path.join(agentsDir, ent.name), "utf8");
+      const { name, description } = parseSkillFrontmatter(md);
+      out.push({ name: name || ent.name.replace(/\.md$/, ""), description: description || "", source });
+    } catch {
+      // unreadable → skip
+    }
+  }
+  return out;
+}
+
+/** All agents available to the launched session: project `.claude/agents` + user `~/.claude/agents`. */
+async function discoverAgents(root: string): Promise<SkillInfo[]> {
+  const [project, user] = await Promise.all([
+    discoverAgentsIn(path.join(root, ".claude", "agents"), "project"),
+    discoverAgentsIn(path.join(os.homedir(), ".claude", "agents"), "user"),
+  ]);
+  const byName = new Map<string, SkillInfo>();
+  for (const a of [...user, ...project]) byName.set(a.name, a);
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Read a pinned-name list (skills or agents) from its JSON file. */
+async function readNameList(file: string): Promise<string[]> {
+  try {
+    const raw = await fs.readFile(file, "utf8");
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter((s) => typeof s === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveNameList(file: string, names: string[]): Promise<void> {
+  await fs.mkdir(CONFIG_DIR, { recursive: true });
+  await fs.writeFile(file, JSON.stringify(names, null, 2), "utf8");
+}
+
+const getSelectedSkills = () => readNameList(SKILLS_FILE);
+const saveSelectedSkills = (names: string[]) => saveNameList(SKILLS_FILE, names);
+const getSelectedAgents = () => readNameList(AGENTS_FILE);
+const saveSelectedAgents = (names: string[]) => saveNameList(AGENTS_FILE, names);
+
+/**
+ * The full system prompt handed to a launched Claude Code session: the editable
+ * pre-prompt, plus an instruction naming any skills the user pinned so Claude
+ * reaches for them when relevant.
+ */
+async function getEffectivePrompt(root: string): Promise<string> {
+  const base = await getPrePrompt();
+  const [selSkills, selAgents, skills, agents] = await Promise.all([
+    getSelectedSkills(),
+    getSelectedAgents(),
+    discoverSkills(root),
+    discoverAgents(root),
+  ]);
+
+  const pinnedLines = (selected: string[], available: SkillInfo[]) => {
+    const byName = new Map(available.map((s) => [s.name, s]));
+    return selected
+      .filter((n) => byName.has(n))
+      .map((n) => {
+        const desc = byName.get(n)!.description;
+        return desc ? `- ${n}: ${desc}` : `- ${n}`;
+      });
+  };
+
+  const parts = [base];
+  const skillLines = pinnedLines(selSkills, skills);
+  if (skillLines.length) {
+    parts.push(
+      "\nYou have the following skills pinned for this session — invoke them (via the Skill tool) whenever a task matches:\n" +
+        skillLines.join("\n"),
+    );
+  }
+  const agentLines = pinnedLines(selAgents, agents);
+  if (agentLines.length) {
+    parts.push(
+      "\nYou have the following agents pinned for this session — delegate to them (via the Task/Agent tool, subagent_type by name) whenever a task matches their specialty:\n" +
+        agentLines.join("\n"),
+    );
+  }
+  return parts.join("\n");
 }
 
 interface TreeNode {
@@ -580,6 +729,31 @@ export function createApp(root: string): Express {
     }
   });
 
+  app.get("/api/skills", async (_req, res) => {
+    try {
+      const [available, selected, agents, selectedAgents] = await Promise.all([
+        discoverSkills(ROOT),
+        getSelectedSkills(),
+        discoverAgents(ROOT),
+        getSelectedAgents(),
+      ]);
+      res.json({ available, selected, agents, selectedAgents });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.post("/api/skills", async (req, res) => {
+    try {
+      const { skills, agents } = req.body as { skills?: string[]; agents?: string[] };
+      const clean = (a: unknown) => (Array.isArray(a) ? a.filter((s) => typeof s === "string") : []);
+      await Promise.all([saveSelectedSkills(clean(skills)), saveSelectedAgents(clean(agents))]);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
   app.post("/api/classify", async (req, res) => {
     try {
       const { prompt } = req.body as { prompt: string };
@@ -654,7 +828,7 @@ async function wireTerminal(ws: import("ws").WebSocket, pathname: string, root: 
       env: {
         ...process.env,
         TERM: "xterm-256color",
-        CLAUDE_ROUTER_PROMPT: await getPrePrompt(),
+        CLAUDE_ROUTER_PROMPT: await getEffectivePrompt(root),
       } as { [key: string]: string },
     });
   } catch (err) {

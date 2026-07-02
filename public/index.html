@@ -57,6 +57,16 @@
         border: 1px solid var(--border); border-radius: 4px; padding: 10px; font: inherit;
         font-size: 13px; resize: vertical; line-height: 1.5; }
       #ppmodal .mbtns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+      #ppskills, #ppagents { max-height: 150px; overflow-y: auto; border: 1px solid var(--border);
+        border-radius: 4px; padding: 6px; background: var(--bg); }
+      .skill { display: flex; align-items: flex-start; gap: 8px; padding: 4px 6px;
+        font-size: 12px; line-height: 1.4; cursor: pointer; border-radius: 4px; }
+      .skill:hover { background: var(--panel); }
+      .skill input { margin-top: 2px; }
+      .skill .sk-name { font-weight: 600; }
+      .skill .sk-src { opacity: .5; font-size: 11px; }
+      .skill .sk-desc { opacity: .7; display: block; }
+      #ppskills .empty, #ppagents .empty { opacity: .6; font-size: 12px; padding: 6px; }
       /* Context menu */
       #ctxmenu { position: fixed; z-index: 1000; display: none; min-width: 150px;
         background: var(--panel); border: 1px solid var(--border); border-radius: 5px;
@@ -180,6 +190,10 @@
       <div class="mbox" style="width:640px">
         <div id="modaltitle2">Pre-prompt — injected into every Claude Code session</div>
         <textarea id="pptext" spellcheck="false"></textarea>
+        <div id="ppskills-label" style="margin:12px 0 6px;font-size:12px;opacity:.75">Pinned skills — checked skills are named in the pre-prompt so Claude reaches for them</div>
+        <div id="ppskills"></div>
+        <div id="ppagents-label" style="margin:12px 0 6px;font-size:12px;opacity:.75">Pinned agents — checked agents are named in the pre-prompt so Claude delegates to them</div>
+        <div id="ppagents"></div>
         <div class="mbtns">
           <button id="ppreset" class="ghost" style="margin-right:auto">Reset to default</button>
           <button id="ppcancel" class="ghost">Cancel</button>
@@ -1054,11 +1068,42 @@
 
       /* Pre-prompt editor */
       let ppDefault = "";
+      function esc(s) {
+        return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      }
+      function renderPins(box, list, selectedNames, emptyMsg) {
+        const selected = new Set(selectedNames || []);
+        if (!list.length) { box.innerHTML = '<div class="empty">' + emptyMsg + '</div>'; return; }
+        box.innerHTML = list.map((s) =>
+          '<label class="skill"><input type="checkbox" value="' + esc(s.name) + '"' +
+          (selected.has(s.name) ? " checked" : "") + '>' +
+          '<span><span class="sk-name">' + esc(s.name) + '</span> ' +
+          '<span class="sk-src">(' + esc(s.source) + ')</span>' +
+          (s.description ? '<span class="sk-desc">' + esc(s.description) + '</span>' : '') +
+          '</span></label>'
+        ).join("");
+      }
+      async function loadSkills() {
+        try {
+          const data = await (await fetch("/api/skills")).json();
+          renderPins($("ppskills"), data.available || [], data.selected,
+            'No skills found in <code>.claude/skills</code> (project) or <code>~/.claude/skills</code>.');
+          renderPins($("ppagents"), data.agents || [], data.selectedAgents,
+            'No agents found in <code>.claude/agents</code> (project) or <code>~/.claude/agents</code>.');
+        } catch (e) {
+          $("ppskills").innerHTML = '<div class="empty">Could not load skills.</div>';
+          $("ppagents").innerHTML = '<div class="empty">Could not load agents.</div>';
+        }
+      }
+      function checkedIn(id) {
+        return [...$(id).querySelectorAll("input:checked")].map((i) => i.value);
+      }
       async function openPrePrompt() {
         const data = await (await fetch("/api/preprompt")).json();
         ppDefault = data.default || "";
         $("pptext").value = data.prompt || "";
         $("ppmodal").style.display = "flex";
+        loadSkills();
         setTimeout(() => $("pptext").focus(), 0);
       }
       $("claudecfg").onclick = openPrePrompt;
@@ -1070,6 +1115,11 @@
           body: JSON.stringify({ prompt: $("pptext").value }),
         })).json();
         if (data.error) return alert(data.error);
+        const sk = await (await fetch("/api/skills", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ skills: checkedIn("ppskills"), agents: checkedIn("ppagents") }),
+        })).json();
+        if (sk.error) return alert(sk.error);
         $("ppmodal").style.display = "none";
         if (claudeTerm) claudeTerm.reset(); // relaunch claude so the new pre-prompt takes effect
       };
