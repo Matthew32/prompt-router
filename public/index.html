@@ -379,6 +379,15 @@
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => openSearch("text"));
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, openFileSearch);
         editor.onDidChangeCursorPosition(updateBlame);
+        // Send the current selection (or line) to the Claude Code panel as context.
+        editor.addAction({
+          id: "send-to-claude",
+          label: "Send selection to Claude Code",
+          keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyL],
+          contextMenuGroupId: "navigation",
+          contextMenuOrder: 1,
+          run: sendSelectionToClaude,
+        });
         // Vim mode (nvim-style), toggleable and persisted. Status line shows the command/mode.
         require(["monaco-vim"], (MonacoVim) => {
           MonacoVimRef = MonacoVim;
@@ -1065,6 +1074,33 @@
         }
       }
       $("clauderestart").onclick = () => claudeTerm && claudeTerm.reset();
+
+      // Push the editor selection into the Claude prompt as context. Includes the
+      // file path and line range; bracketed paste keeps multi-line text as one
+      // paste (no accidental Enter submits) inside the Claude Code CLI.
+      function sendSelectionToClaude() {
+        if (!editor || !claudeTerm) return;
+        const model = editor.getModel();
+        if (!model) return;
+        let sel = editor.getSelection();
+        let text = sel && !sel.isEmpty() ? model.getValueInRange(sel) : "";
+        let start, end;
+        if (text) {
+          start = sel.startLineNumber;
+          end = sel.endColumn === 1 && sel.endLineNumber > sel.startLineNumber
+            ? sel.endLineNumber - 1 : sel.endLineNumber; // full-line selections end at col 1 of the next line
+        } else {
+          // No selection → send the current line.
+          const pos = editor.getPosition();
+          if (!pos) return;
+          start = end = pos.lineNumber;
+          text = model.getLineContent(pos.lineNumber);
+        }
+        const file = active && !tabs.get(active)?.readOnly ? active : null;
+        const ref = file ? `${file}:${start === end ? start : start + "-" + end}` : "(unsaved buffer)";
+        const payload = `Context from ${ref}:\n\`\`\`\n${text}\n\`\`\`\n`;
+        claudeTerm.send("\x1b[200~" + payload + "\x1b[201~");
+      }
 
       /* Pre-prompt editor */
       let ppDefault = "";
