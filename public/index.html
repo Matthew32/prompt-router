@@ -158,6 +158,13 @@
       #claudespeak.on { color: var(--fg); }
       #claudemic.on { color: #f48771; }
       .blameghost { color: #3a597a !important; font-style: italic; opacity: .8; }
+      /* Merge conflict regions */
+      .cf-current { background: rgba(46, 160, 67, 0.16) !important; }
+      .cf-current-hdr { background: rgba(46, 160, 67, 0.35) !important; }
+      .cf-incoming { background: rgba(56, 139, 253, 0.16) !important; }
+      .cf-incoming-hdr { background: rgba(56, 139, 253, 0.35) !important; }
+      .cf-base { background: rgba(128, 128, 128, 0.14) !important; }
+      .cf-sep { background: rgba(255, 255, 255, 0.08) !important; }
       /* Diff line colors */
       .diff-add { background: rgba(46, 160, 67, 0.22) !important; }
       .diff-add-gutter { background: rgba(46, 160, 67, 0.5); }
@@ -387,6 +394,34 @@
           contextMenuGroupId: "navigation",
           contextMenuOrder: 1,
           run: sendSelectionToClaude,
+        });
+        // Merge-conflict resolution (VS Code-style): CodeLens actions on each
+        // <<<<<<< block to accept current / incoming / both, per conflict.
+        monaco.editor.registerCommand("merge.acceptCurrent", (_, args) => resolveConflict(args.index, "current"));
+        monaco.editor.registerCommand("merge.acceptIncoming", (_, args) => resolveConflict(args.index, "incoming"));
+        monaco.editor.registerCommand("merge.acceptBoth", (_, args) => resolveConflict(args.index, "both"));
+        monaco.languages.registerCodeLensProvider("*", {
+          onDidChange: (cb) => { conflictLensRefresh = cb; return { dispose: () => { conflictLensRefresh = null; } }; },
+          provideCodeLenses: (model) => {
+            if (!editor || model !== editor.getModel()) return { lenses: [], dispose: () => {} };
+            const lenses = [];
+            parseConflicts(model).forEach((c, i) => {
+              lenses.push(
+                { range: new monaco.Range(c.start, 1, c.start, 1), id: `cur${i}`,
+                  command: { id: "merge.acceptCurrent", title: "Accept Current", arguments: [{ index: i }] } },
+                { range: new monaco.Range(c.start, 1, c.start, 1), id: `inc${i}`,
+                  command: { id: "merge.acceptIncoming", title: "Accept Incoming", arguments: [{ index: i }] } },
+                { range: new monaco.Range(c.start, 1, c.start, 1), id: `both${i}`,
+                  command: { id: "merge.acceptBoth", title: "Accept Both", arguments: [{ index: i }] } },
+              );
+            });
+            return { lenses, dispose: () => {} };
+          },
+          resolveCodeLens: (_m, lens) => lens,
+        });
+        editor.onDidChangeModelContent(() => {
+          clearTimeout(conflictTimer);
+          conflictTimer = setTimeout(applyConflictDecos, 150);
         });
         // Vim mode (nvim-style), toggleable and persisted. Status line shows the command/mode.
         require(["monaco-vim"], (MonacoVim) => {
@@ -631,6 +666,67 @@
         blameDeco = editor.deltaDecorations(blameDeco, []);
         updateBlame();
         applyDiffDecos();
+        applyConflictDecos();
+      }
+
+      /* ---------- Merge conflicts ---------- */
+      let conflictDeco = [], conflictTimer = null, conflictLensRefresh = null;
+      // Scan the model for <<<<<<< / ||||||| / ======= / >>>>>>> blocks.
+      function parseConflicts(model) {
+        const out = [];
+        let cur = null;
+        const n = model.getLineCount();
+        for (let i = 1; i <= n; i++) {
+          const t = model.getLineContent(i);
+          if (t.startsWith("<<<<<<<")) cur = { start: i, base: null, sep: null, end: null };
+          else if (cur && !cur.sep && t.startsWith("|||||||")) cur.base = i;
+          else if (cur && !cur.sep && t.startsWith("=======")) cur.sep = i;
+          else if (cur && cur.sep && t.startsWith(">>>>>>>")) { cur.end = i; out.push(cur); cur = null; }
+        }
+        return out;
+      }
+      function applyConflictDecos() {
+        if (!editor) return;
+        const model = editor.getModel();
+        const entry = active && tabs.get(active);
+        if (!model || !entry || entry.readOnly) {
+          conflictDeco = editor ? editor.deltaDecorations(conflictDeco, []) : [];
+          return;
+        }
+        const decos = [];
+        const whole = (a, b, cls) => decos.push({
+          range: new monaco.Range(a, 1, b, 1), options: { isWholeLine: true, className: cls } });
+        for (const c of parseConflicts(model)) {
+          whole(c.start, c.start, "cf-current-hdr");
+          const curEnd = (c.base || c.sep) - 1;
+          if (curEnd >= c.start + 1) whole(c.start + 1, curEnd, "cf-current");
+          if (c.base) {
+            whole(c.base, c.base, "cf-sep");
+            if (c.sep - 1 >= c.base + 1) whole(c.base + 1, c.sep - 1, "cf-base");
+          }
+          whole(c.sep, c.sep, "cf-sep");
+          if (c.end - 1 >= c.sep + 1) whole(c.sep + 1, c.end - 1, "cf-incoming");
+          whole(c.end, c.end, "cf-incoming-hdr");
+        }
+        conflictDeco = editor.deltaDecorations(conflictDeco, decos);
+        if (conflictLensRefresh) conflictLensRefresh();
+      }
+      // Replace conflict #index with the chosen side ("current" | "incoming" | "both").
+      function resolveConflict(index, choice) {
+        if (!editor) return;
+        const model = editor.getModel();
+        if (!model) return;
+        const c = parseConflicts(model)[index];
+        if (!c) return;
+        const lines = [];
+        const grab = (a, b) => { for (let i = a; i <= b; i++) lines.push(model.getLineContent(i)); };
+        const curEnd = (c.base || c.sep) - 1;
+        if (choice === "current" || choice === "both") grab(c.start + 1, curEnd);
+        if (choice === "incoming" || choice === "both") grab(c.sep + 1, c.end - 1);
+        const range = new monaco.Range(c.start, 1, c.end, model.getLineMaxColumn(c.end));
+        editor.executeEdits("merge", [{ range, text: lines.join("\n") }]);
+        editor.focus();
+        applyConflictDecos();
       }
       function applyDiffDecos() {
         if (!editor) return;
